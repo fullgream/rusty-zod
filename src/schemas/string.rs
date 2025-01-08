@@ -83,6 +83,18 @@ impl StringSchema {
         self.pattern(r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
             .error_message("string.ip", "Invalid IP address format")
     }
+
+    pub fn trim(self) -> WithTransform<Self> {
+        self.with_transform(Transform::Trim)
+    }
+
+    pub fn to_lower_case(self) -> WithTransform<Self> {
+        self.with_transform(Transform::ToLowerCase)
+    }
+
+    pub fn to_upper_case(self) -> WithTransform<Self> {
+        self.with_transform(Transform::ToUpperCase)
+    }
 }
 
 impl HasErrorMessages for StringSchema {
@@ -267,5 +279,37 @@ mod tests {
         assert!(schema.validate(&json!("192.168.1.1")).is_ok());
         assert!(schema.validate(&json!("256.1.2.3")).is_err());
         assert!(schema.validate(&json!("not-an-ip")).is_err());
+    }
+
+    #[test]
+    fn test_string_transformations() {
+        let schema = StringSchema::default()
+            .trim()
+            .to_lower_case()
+            .email();
+
+        assert_eq!(
+            schema.validate(&json!("  TEST@EXAMPLE.COM  ")).unwrap(),
+            json!("test@example.com")
+        );
+
+        let err = schema.validate(&json!("  NOT-AN-EMAIL  ")).unwrap_err();
+        assert_eq!(err.context.code, "string.email");
+    }
+
+    #[test]
+    fn test_string_transform_chain() {
+        let schema = StringSchema::default()
+            .trim()
+            .to_upper_case()
+            .min_length(5);
+
+        assert_eq!(
+            schema.validate(&json!("  hello  ")).unwrap(),
+            json!("HELLO")
+        );
+
+        let err = schema.validate(&json!("  hi  ")).unwrap_err();
+        assert_eq!(err.context.code, "string.too_short");
     }
 }
