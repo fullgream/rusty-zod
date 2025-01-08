@@ -1,0 +1,13 @@
+[package]
+name = "rusty-zod"
+version = "0.1.0"
+edition = "2021"
+authors = ["OpenHands <openhands@all-hands.dev>"]
+description = "A Rust library for type-safe data validation inspired by Zod"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+regex = "1.10"
