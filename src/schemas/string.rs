@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 use regex::Regex;
 use serde_json::Value;
 
-use crate::error::ValidationError;
+use crate::error::{ValidationError, ErrorCode};
 use super::{Schema, SchemaType, HasErrorMessages, ErrorMessage, get_type_name, transform::{Transformable, Transform, WithTransform}};
 
 #[derive(Clone)]
@@ -116,56 +116,64 @@ impl Schema for StringSchema {
             Value::String(s) => {
                 if let Some(min_len) = self.min_length {
                     if s.len() < min_len {
-                        return Err(ValidationError::new("string.too_short", "")
-                            .with_message(self.get_error_message("string.too_short")
-                                .unwrap_or_else(|| format!("String length {} is less than minimum {}", s.len(), min_len)))
-                            .with_min_length(min_len));
+                        return Err(ValidationError::new(ErrorCode::StringTooShort)
+                            .with_details(|d| {
+                                d.min_length = Some(min_len);
+                            })
+                            .message(self.get_error_message("string.too_short")
+                                .unwrap_or_else(|| format!("String must be at least {} characters long", min_len))));
                     }
                 }
 
                 if let Some(max_len) = self.max_length {
                     if s.len() > max_len {
-                        return Err(ValidationError::new("string.too_long", "")
-                            .with_message(self.get_error_message("string.too_long")
-                                .unwrap_or_else(|| format!("String length {} is greater than maximum {}", s.len(), max_len)))
-                            .with_max_length(max_len));
+                        return Err(ValidationError::new(ErrorCode::StringTooLong)
+                            .with_details(|d| {
+                                d.max_length = Some(max_len);
+                            })
+                            .message(self.get_error_message("string.too_long")
+                                .unwrap_or_else(|| format!("String must be at most {} characters long", max_len))));
                     }
                 }
 
                 if let Some(pattern) = &self.pattern {
                     if !pattern.is_match(s) {
-                        return Err(ValidationError::new("string.pattern", "")
-                            .with_message(self.get_error_message("string.pattern")
-                                .unwrap_or_else(|| "String does not match pattern".to_string()))
-                            .with_pattern(pattern.as_str().to_string()));
+                        return Err(ValidationError::new(ErrorCode::PatternMismatch)
+                            .with_details(|d| {
+                                d.pattern = Some(pattern.as_str().to_string());
+                            })
+                            .message(self.get_error_message("string.pattern")
+                                .unwrap_or_else(|| format!("String must match pattern: {}", pattern.as_str()))));
                     }
                 }
 
                 if self.email {
                     let email_regex = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
                     if !email_regex.is_match(s) {
-                        return Err(ValidationError::new("string.email", "")
-                            .with_message(self.get_error_message("string.email")
-                                .unwrap_or_else(|| "Invalid email format".to_string())));
+                        return Err(ValidationError::new(ErrorCode::InvalidEmail)
+                            .message(self.get_error_message("string.email")
+                                .unwrap_or_else(|| "Must be a valid email address".to_string())));
                     }
                 }
 
                 for validator in &self.custom_validators {
                     if let Err(msg) = validator(s) {
-                        return Err(ValidationError::new("string.custom", "")
-                            .with_message(msg));
+                        return Err(ValidationError::new(ErrorCode::Custom(msg.clone())));
                     }
                 }
 
                 Ok(value.clone())
             }
-            Value::Null => Err(ValidationError::new("string.required", "")
-                .with_message(self.get_error_message("string.required")
+            Value::Null => Err(ValidationError::new(ErrorCode::RequiredField)
+                .message(self.get_error_message("string.required")
                     .unwrap_or_else(|| "This field is required".to_string()))),
-            _ => Err(ValidationError::new("string.invalid_type", "")
-                .with_message(self.get_error_message("string.invalid_type")
-                    .unwrap_or_else(|| format!("Expected string, got {}", get_type_name(value))))
-                .with_type_info("string", get_type_name(value).to_string())),
+            _ => Err(ValidationError::new(ErrorCode::InvalidType)
+                .with_details(|d| {
+                    d.expected_type = Some("string".to_string());
+                    d.actual_type = Some(get_type_name(value).to_string());
+                })
+                .message(self.get_error_message("string.invalid_type")
+                    .unwrap_or_else(|| format!("Expected string, got {}", get_type_name(value))))),
         }
     }
 
