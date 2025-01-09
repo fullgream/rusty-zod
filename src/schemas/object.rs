@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use serde::{de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::error::ValidationError;
+use crate::error::{ValidationError, ParseError};
 use super::{Schema, SchemaType, HasErrorMessages, ErrorMessage, get_type_name, validate_schema_type};
 
 #[derive(Clone)]
@@ -47,6 +48,18 @@ impl ObjectSchema {
 
     pub fn strict(self) -> Self {
         self.error_message("object.unknown_field", "Unknown field: {field}")
+    }
+
+    pub fn parse<T>(&self, value: &Value) -> Result<T, ParseError>
+    where
+        T: DeserializeOwned,
+    {
+        // First validate the value
+        self.validate(value).map_err(ParseError::from)?;
+        
+        // Then try to deserialize into the target type
+        serde_json::from_value(value.clone())
+            .map_err(|e| ParseError::Parse(format!("Failed to parse object: {}", e)))
     }
 }
 
@@ -111,8 +124,28 @@ impl Schema for ObjectSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::{Deserialize, Serialize};
     use serde_json::json;
     use crate::schemas::{StringSchema, NumberSchema};
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct User {
+        name: String,
+        age: u32,
+        email: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct Address {
+        street: String,
+        city: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct Person {
+        name: String,
+        address: Address,
+    }
 
     #[test]
     fn test_object_required_fields() {
@@ -220,5 +253,126 @@ mod tests {
         let err = schema.validate(&json!("not an object")).unwrap_err();
         assert_eq!(err.context.code, "object.invalid_type");
         assert!(err.to_string().contains("Must be an object"));
+    }
+
+    #[test]
+    fn test_object_parse_simple() {
+        let schema = ObjectSchema::default()
+            .field("name", StringSchema::default())
+            .field("age", NumberSchema::default())
+            .optional_field("email", StringSchema::default());
+
+        let value = json!({
+            "name": "John",
+            "age": 30,
+            "email": "john@example.com"
+        });
+
+        let user: User = schema.parse(&value).unwrap();
+        assert_eq!(user.name, "John");
+        assert_eq!(user.age, 30);
+        assert_eq!(user.email, Some("john@example.com".to_string()));
+
+        // Test without optional field
+        let value = json!({
+            "name": "John",
+            "age": 30
+        });
+
+        let user: User = schema.parse(&value).unwrap();
+        assert_eq!(user.name, "John");
+        assert_eq!(user.age, 30);
+        assert_eq!(user.email, None);
+    }
+
+    #[test]
+    fn test_object_parse_nested() {
+        let address_schema = ObjectSchema::default()
+            .field("street", StringSchema::default())
+            .field("city", StringSchema::default());
+
+        let schema = ObjectSchema::default()
+            .field("name", StringSchema::default())
+            .field("address", address_schema);
+
+        let value = json!({
+            "name": "John",
+            "address": {
+                "street": "123 Main St",
+                "city": "New York"
+            }
+        });
+
+        let person: Person = schema.parse(&value).unwrap();
+        assert_eq!(person.name, "John");
+        assert_eq!(person.address.street, "123 Main St");
+        assert_eq!(person.address.city, "New York");
+    }
+
+    #[test]
+    fn test_object_parse_validation_error() {
+        let schema = ObjectSchema::default()
+            .field("name", StringSchema::default())
+            .field("age", NumberSchema::default());
+
+        let value = json!({
+            "name": "John",
+            "age": "not a number"
+        });
+
+        let result = schema.parse::<User>(&value);
+        assert!(result.is_err());
+        
+        match result.unwrap_err() {
+            ParseError::Validation(err) => {
+                assert!(err.to_string().contains("Expected number"));
+            }
+            ParseError::Parse(_) => panic!("Expected ValidationError"),
+        }
+    }
+
+    #[test]
+    fn test_object_parse_type_mismatch() {
+        let schema = ObjectSchema::default()
+            .field("name", StringSchema::default())
+            .field("age", NumberSchema::default());
+
+        let value = json!({
+            "name": "John",
+            "age": 30.5 // User expects u32, but JSON has f64
+        });
+
+        let result = schema.parse::<User>(&value);
+        assert!(result.is_err());
+        
+        match result.unwrap_err() {
+            ParseError::Parse(msg) => {
+                assert!(msg.contains("Failed to parse object"));
+            }
+            ParseError::Validation(_) => panic!("Expected ParseError"),
+        }
+    }
+
+    #[test]
+    fn test_object_parse_missing_field() {
+        let schema = ObjectSchema::default()
+            .field("name", StringSchema::default())
+            .field("age", NumberSchema::default());
+
+        let value = json!({
+            "name": "John"
+            // missing age field
+        });
+
+        let result = schema.parse::<User>(&value);
+        assert!(result.is_err());
+        
+        match result.unwrap_err() {
+            ParseError::Validation(err) => {
+                assert_eq!(err.context.code, "object.required");
+                assert_eq!(err.context.path, "age");
+            }
+            ParseError::Parse(_) => panic!("Expected ValidationError"),
+        }
     }
 }

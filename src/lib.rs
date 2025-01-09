@@ -76,10 +76,35 @@ macro_rules! best_of {
 
 #[macro_export]
 macro_rules! object {
+    // Empty object
+    () => {
+        $crate::object()
+    };
+
+    // Object with string keys: { "name" => schema }
     ({ $($key:expr => $value:expr),* $(,)? }) => {{
         let mut schema = $crate::object();
         $(
             schema = schema.field($key, $value);
+        )*
+        schema
+    }};
+
+    // Object with field names as identifiers: { name: schema }
+    ({ $($field:ident $(: $schema:expr)? $(?)? $(,)?)* }) => {{
+        let mut schema = $crate::object();
+        $(
+            schema = if false $(|| true)?  { // Optional field check
+                schema.optional_field(
+                    stringify!($field),
+                    $($schema)?.into_schema_type()
+                )
+            } else {
+                schema.field(
+                    stringify!($field),
+                    $($schema)?.into_schema_type()
+                )
+            };
         )*
         schema
     }};
@@ -89,6 +114,7 @@ macro_rules! object {
 mod tests {
     use super::*;
     use serde_json::json;
+    use serde::{Deserialize, Serialize};
 
     #[test]
     fn test_complex_schema() {
@@ -185,5 +211,87 @@ mod tests {
 
         let result = schema.validate(&valid_data);
         assert!(result.is_ok());
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct User {
+        name: String,
+        age: u32,
+        email: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct Address {
+        street: String,
+        city: String,
+        postal_code: Option<String>,
+    }
+
+    #[test]
+    fn test_object_macro_new_syntax() {
+        // Using new identifier syntax
+        let schema = object! {
+            name: string().min_length(2),
+            age: number().min(0.0),
+            email?: string().email(),  // Optional field
+        };
+
+        let valid_data = json!({
+            "name": "John",
+            "age": 30,
+            "email": "john@example.com"
+        });
+
+        let result = schema.validate(&valid_data).unwrap();
+        let user: User = serde_json::from_value(result).unwrap();
+        assert_eq!(user.name, "John");
+        assert_eq!(user.age, 30);
+        assert_eq!(user.email, Some("john@example.com".to_string()));
+
+        // Test without optional field
+        let valid_data = json!({
+            "name": "John",
+            "age": 30
+        });
+
+        let result = schema.validate(&valid_data).unwrap();
+        let user: User = serde_json::from_value(result).unwrap();
+        assert_eq!(user.name, "John");
+        assert_eq!(user.age, 30);
+        assert_eq!(user.email, None);
+    }
+
+    #[test]
+    fn test_nested_object_macro() {
+        let schema = object! {
+            name: string(),
+            address: object! {
+                street: string(),
+                city: string(),
+                postal_code?: string(),  // Optional field
+            }
+        };
+
+        let valid_data = json!({
+            "name": "John",
+            "address": {
+                "street": "123 Main St",
+                "city": "New York",
+                "postal_code": "10001"
+            }
+        });
+
+        assert!(schema.validate(&valid_data).is_ok());
+
+        // Without optional field
+        let valid_data = json!({
+            "name": "John",
+            "address": {
+                "street": "123 Main St",
+                "city": "New York"
+            }
+        });
+
+        assert!(schema.validate(&valid_data).is_ok());
     }
 }
