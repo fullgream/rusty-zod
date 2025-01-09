@@ -158,6 +158,27 @@ mod tests {
     }
 
     #[test]
+    fn test_string_max_length_error() {
+        let error = ValidationError::new(ErrorCode::StringTooLong)
+            .at("description")
+            .with_details(|d| {
+                d.max_length = Some(100);
+            });
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "string.too_long",
+                "path": "description",
+                "message": "String must be at most 100 characters long",
+                "details": {
+                    "max_length": 100
+                }
+            }
+        }));
+    }
+
+    #[test]
     fn test_invalid_email_error() {
         let error = ValidationError::new(ErrorCode::InvalidEmail)
             .at("email");
@@ -168,6 +189,66 @@ mod tests {
                 "code": "string.email",
                 "path": "email",
                 "message": "Must be a valid email address"
+            }
+        }));
+    }
+
+    #[test]
+    fn test_pattern_mismatch_error() {
+        let error = ValidationError::new(ErrorCode::PatternMismatch)
+            .at("phone")
+            .with_details(|d| {
+                d.pattern = Some(r"^\+\d{1,3}-\d{3}-\d{3}-\d{4}$".to_string());
+            });
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "string.pattern",
+                "path": "phone",
+                "message": "String must match pattern: ^\\+\\d{1,3}-\\d{3}-\\d{3}-\\d{4}$",
+                "details": {
+                    "pattern": r"^\+\d{1,3}-\d{3}-\d{3}-\d{4}$"
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn test_number_range_error() {
+        let error = ValidationError::new(ErrorCode::NumberTooSmall)
+            .at("age")
+            .with_details(|d| {
+                d.min_value = Some(0.0);
+            });
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "number.too_small",
+                "path": "age",
+                "message": "Number must be greater than or equal to 0",
+                "details": {
+                    "min_value": 0.0
+                }
+            }
+        }));
+
+        let error = ValidationError::new(ErrorCode::NumberTooLarge)
+            .at("age")
+            .with_details(|d| {
+                d.max_value = Some(150.0);
+            });
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "number.too_large",
+                "path": "age",
+                "message": "Number must be less than or equal to 150",
+                "details": {
+                    "max_value": 150.0
+                }
             }
         }));
     }
@@ -211,6 +292,27 @@ mod tests {
     }
 
     #[test]
+    fn test_unknown_field_error() {
+        let error = ValidationError::new(ErrorCode::UnknownField)
+            .at("unknown_field")
+            .with_details(|d| {
+                d.field_name = Some("unknown_field".to_string());
+            });
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "object.unknown_field",
+                "path": "unknown_field",
+                "message": "Unknown field: unknown_field",
+                "details": {
+                    "field_name": "unknown_field"
+                }
+            }
+        }));
+    }
+
+    #[test]
     fn test_custom_message() {
         let error = ValidationError::new(ErrorCode::StringTooShort)
             .at("name")
@@ -231,4 +333,94 @@ mod tests {
             }
         }));
     }
+
+    #[test]
+    fn test_custom_error() {
+        let error = ValidationError::new(ErrorCode::Custom("custom.validation.error".to_string()))
+            .at("field")
+            .message("Custom validation failed");
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "custom",
+                "path": "field",
+                "message": "Custom validation failed"
+            }
+        }));
+    }
+
+    #[test]
+    fn test_multiple_details() {
+        let error = ValidationError::new(ErrorCode::Custom("validation.error".to_string()))
+            .at("field")
+            .with_details(|d| {
+                d.min_length = Some(3);
+                d.max_length = Some(10);
+                d.pattern = Some(r"\d+".to_string());
+                d.min_value = Some(0.0);
+                d.max_value = Some(100.0);
+                d.expected_type = Some("string".to_string());
+                d.actual_type = Some("number".to_string());
+                d.field_name = Some("test_field".to_string());
+            });
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "custom",
+                "path": "field",
+                "message": "Validation error",
+                "details": {
+                    "min_length": 3,
+                    "max_length": 10,
+                    "pattern": r"\d+",
+                    "min_value": 0.0,
+                    "max_value": 100.0,
+                    "expected_type": "string",
+                    "actual_type": "number",
+                    "field_name": "test_field"
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn test_empty_details() {
+        let error = ValidationError::new(ErrorCode::RequiredField)
+            .at("field");
+
+        let json = error.to_json();
+        assert_eq!(json, json!({
+            "context": {
+                "code": "object.required",
+                "path": "field",
+                "message": "This field is required"
+            }
+        }));
+    }
+
+    #[test]
+    fn test_error_display() {
+        let error = ValidationError::new(ErrorCode::StringTooShort)
+            .at("name")
+            .with_details(|d| {
+                d.min_length = Some(3);
+            });
+
+        assert_eq!(
+            error.to_string(),
+            "String must be at least 3 characters long"
+        );
+
+        let error = ValidationError::new(ErrorCode::StringTooShort)
+            .at("name")
+            .message("Custom error message");
+
+        assert_eq!(
+            error.to_string(),
+            "Custom error message"
+        );
+    }
+}
 }

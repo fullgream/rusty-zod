@@ -12,6 +12,12 @@ pub enum ErrorCode {
     NumberTooSmall,
     NumberTooLarge,
     InvalidNumber,
+    NotInteger,
+    
+    // Array errors
+    ArrayTooShort,
+    ArrayTooLong,
+    InvalidArrayItem,
     
     // Object errors
     RequiredField,
@@ -20,6 +26,42 @@ pub enum ErrorCode {
     
     // Custom error
     Custom(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_code_display() {
+        assert_eq!(ErrorCode::StringTooShort.to_string(), "string.too_short");
+        assert_eq!(ErrorCode::InvalidEmail.to_string(), "string.email");
+        assert_eq!(ErrorCode::NumberTooSmall.to_string(), "number.too_small");
+        assert_eq!(ErrorCode::RequiredField.to_string(), "object.required");
+    }
+
+    #[test]
+    fn test_error_code_default_messages() {
+        assert_eq!(
+            ErrorCode::StringTooShort.default_message(),
+            "String is too short"
+        );
+        assert_eq!(
+            ErrorCode::InvalidEmail.default_message(),
+            "Invalid email format"
+        );
+        assert_eq!(
+            ErrorCode::NumberTooSmall.default_message(),
+            "Number is too small"
+        );
+    }
+
+    #[test]
+    fn test_custom_error_code() {
+        let error = ErrorCode::Custom("custom.error".to_string());
+        assert_eq!(error.code(), "custom");
+        assert_eq!(error.default_message(), "custom.error");
+    }
 }
 
 impl ErrorCode {
