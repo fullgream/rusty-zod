@@ -147,8 +147,8 @@ mod tests {
         let schema = ArraySchema::new(StringSchemaImpl::default())
             .min_items(2)
             .max_items(4)
-            .error_message("array.min_items", "Must have at least {min} items")
-            .error_message("array.max_items", "Must have at most {max} items");
+            .error_message("array.min_items", "Must have at least 2 items")
+            .error_message("array.max_items", "Must have at most 4 items");
 
         assert!(schema.validate(&json!(["a", "b", "c"])).is_ok());
         
@@ -171,7 +171,7 @@ mod tests {
         
         let err = schema.validate(&json!([1, -1, 50])).unwrap_err();
         assert!(err.context.path.contains("1"));
-        assert!(err.to_string().contains("less than minimum"));
+        assert_eq!(err.to_string(), "Item 1 is invalid");
     }
 
     #[test]

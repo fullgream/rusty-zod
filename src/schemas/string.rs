@@ -351,9 +351,10 @@ mod tests {
             .trim()
             .to_uppercase()
             .min_length(5);
+        let validate = schema.validate(&json!("  hello  ")).unwrap();
 
         assert_eq!(
-            schema.validate(&json!("  hello  ")).unwrap(),
+            validate,
             json!("HELLO")
         );
 

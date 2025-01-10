@@ -153,7 +153,10 @@ mod tests {
         let invalid_data = json!({
             "name": "John"
         });
-        assert!(schema.validate(&invalid_data).is_err());
+        // We must add .strip() to reset an object schema to the default behavior (stripping unrecognized keys). Without it, the schema will not strip the unrecognized key and this test will fail.
+        let validate_invalid = schema.validate(&invalid_data);
+
+        assert!(validate_invalid.is_err());
     }
 
     #[test]
@@ -255,7 +258,7 @@ mod tests {
             "name": "",
             "age": 16
         })).unwrap_err();
-
+        println!("_______\n{:?}\n_______", err);
         assert!(err.to_string().contains("Name cannot be empty"));
     }
 
