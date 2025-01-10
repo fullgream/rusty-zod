@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::error::ValidationError;
-use super::{Schema, SchemaType, HasErrorMessages, ErrorMessage, get_type_name, transform::{Transformable, Transform, WithTransform}};
+use super::{Schema, SchemaType, HasErrorMessages, get_type_name, transform::{Transformable, Transform, WithTransform}};
 
 #[derive(Clone)]
 pub struct NumberSchema {
@@ -82,19 +82,22 @@ impl Schema for NumberSchema {
             Value::String(s) if self.coerce => {
                 match s.parse::<f64>() {
                     Ok(num) => self.validate_number(num),
-                    Err(_) => Err(ValidationError::new("number.invalid_type", "")
-                        .with_message(self.get_error_message("number.invalid_type")
-                            .unwrap_or_else(|| "Could not parse string as number".to_string()))
-                        .with_type_info("number", "string (not a valid number)".to_string()))
+                    Err(_) => Err(ValidationError::new("number.invalid_type")
+                        .message("Could not parse string as number")
+                        .with_details(|d| {
+                            d.expected_type = Some("number".to_string());
+                            d.actual_type = Some("string (not a valid number)".to_string());
+                        }))
                 }
             }
-            Value::Null => Err(ValidationError::new("number.required", "")
-                .with_message(self.get_error_message("number.required")
-                    .unwrap_or_else(|| "This field is required".to_string()))),
-            _ => Err(ValidationError::new("number.invalid_type", "")
-                .with_message(self.get_error_message("number.invalid_type")
-                    .unwrap_or_else(|| format!("Expected number, got {}", get_type_name(value))))
-                .with_type_info("number", get_type_name(value).to_string())),
+            Value::Null => Err(ValidationError::new("number.required")
+                .message("This field is required")),
+            _ => Err(ValidationError::new("number.invalid_type")
+                .message(format!("Expected number, got {}", get_type_name(value)))
+                .with_details(|d| {
+                    d.expected_type = Some("number".to_string());
+                    d.actual_type = Some(get_type_name(value).to_string());
+                })),
         }
     }
 
@@ -106,30 +109,96 @@ impl Schema for NumberSchema {
 impl NumberSchema {
     fn validate_number(&self, num: f64) -> Result<Value, ValidationError> {
         if self.integer && num.fract() != 0.0 {
-            return Err(ValidationError::new("number.integer", "")
-                .with_message(self.get_error_message("number.integer")
-                    .unwrap_or_else(|| "Expected integer value".to_string())));
+            let mut err = ValidationError::new("number.integer");
+            if let Some(msg) = self.error_messages.get("number.integer") {
+                err = err.message(msg.clone());
+            } else {
+                err = err.message("Must be an integer");
+            }
+            return Err(err);
         }
 
         if let Some(min) = self.min {
             if num < min {
-                return Err(ValidationError::new("number.min", "")
-                    .with_message(self.get_error_message("number.min")
-                        .unwrap_or_else(|| format!("Value {} is less than minimum {}", num, min)))
-                    .with_min(min as i64));
+                let mut err = ValidationError::new("number.min")
+                    .with_details(|d| {
+                        d.min_value = Some(min);
+                    });
+                if let Some(msg) = self.error_messages.get("number.min") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message(format!("Must be at least {}", min));
+                }
+                return Err(err);
             }
         }
 
         if let Some(max) = self.max {
             if num > max {
-                return Err(ValidationError::new("number.max", "")
-                    .with_message(self.get_error_message("number.max")
-                        .unwrap_or_else(|| format!("Value {} is greater than maximum {}", num, max)))
-                    .with_max(max as i64));
+                let mut err = ValidationError::new("number.max")
+                    .with_details(|d| {
+                        d.max_value = Some(max);
+                    });
+                if let Some(msg) = self.error_messages.get("number.max") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message(format!("Must be at most {}", max));
+                }
+                return Err(err);
             }
         }
 
         Ok(Value::Number(serde_json::Number::from_f64(num).unwrap()))
+    }
+
+    fn validate(&self, value: &Value) -> Result<Value, ValidationError> {
+        match value {
+            Value::Number(n) => {
+                let num = n.as_f64().unwrap();
+                self.validate_number(num)
+            }
+            Value::String(s) if self.coerce => {
+                match s.parse::<f64>() {
+                    Ok(num) => self.validate_number(num),
+                    Err(_) => {
+                        let mut err = ValidationError::new("number.invalid_type")
+                            .with_details(|d| {
+                                d.expected_type = Some("number".to_string());
+                                d.actual_type = Some("string".to_string());
+                            });
+                        if let Some(msg) = self.error_messages.get("number.invalid_type") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message("Must be a number");
+                        }
+                        Err(err)
+                    }
+                }
+            }
+            Value::Null if self.optional => Ok(value.clone()),
+            Value::Null => {
+                let mut err = ValidationError::new("number.required");
+                if let Some(msg) = self.error_messages.get("number.required") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message("This field is required");
+                }
+                Err(err)
+            }
+            _ => {
+                let mut err = ValidationError::new("number.invalid_type")
+                    .with_details(|d| {
+                        d.expected_type = Some("number".to_string());
+                        d.actual_type = Some(get_type_name(value).to_string());
+                    });
+                if let Some(msg) = self.error_messages.get("number.invalid_type") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message("Must be a number");
+                }
+                Err(err)
+            }
+        }
     }
 }
 
@@ -150,12 +219,12 @@ mod tests {
         
         let err = schema.validate(&json!(-1)).unwrap_err();
         assert_eq!(err.context.code, "number.min");
-        assert_eq!(err.context.min, Some(0));
+        assert_eq!(err.context.details.min_value, Some(0.0));
         assert!(err.to_string().contains("Must be at least 0"));
 
         let err = schema.validate(&json!(101)).unwrap_err();
         assert_eq!(err.context.code, "number.max");
-        assert_eq!(err.context.max, Some(100));
+        assert_eq!(err.context.details.max_value, Some(100.0));
         assert!(err.to_string().contains("Must be at most 100"));
     }
 

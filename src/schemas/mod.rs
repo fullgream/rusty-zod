@@ -19,7 +19,7 @@ pub use transform::{Transform, Transformable, WithTransform};
 
 #[derive(Clone)]
 pub enum SchemaType {
-    String(StringSchema),
+    String(string::StringSchemaImpl),
     Number(NumberSchema),
     Boolean(BooleanSchema),
     Array(Box<ArraySchema>),
@@ -93,9 +93,8 @@ impl Schema for UnionSchema {
                         Err(e) => last_error = Some(e),
                     }
                 }
-                Err(last_error.unwrap_or_else(|| ValidationError::new("union.no_match", "")
-                    .with_message(self.get_error_message("union.no_match")
-                        .unwrap_or_else(|| "Value did not match any schema".to_string()))))
+                Err(last_error.unwrap_or_else(|| ValidationError::new("union.no_match")
+                    .message("Value did not match any schema")))
             }
             UnionStrategy::All => {
                 for schema in &self.schemas {
@@ -122,9 +121,8 @@ impl Schema for UnionSchema {
 
                 match best_result {
                     Some((_, e)) => Err(e),
-                    None => Err(ValidationError::new("union.no_match", "")
-                        .with_message(self.get_error_message("union.no_match")
-                            .unwrap_or_else(|| "Value did not match any schema".to_string()))),
+                    None => Err(ValidationError::new("union.no_match")
+                        .message("Value did not match any schema")),
                 }
             }
         }

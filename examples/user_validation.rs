@@ -1,4 +1,4 @@
-use rusty_zod::prelude::*;
+use rusty_zod::{prelude::*, StringSchema};
 use serde_json::json;
 
 fn main() {

@@ -32,7 +32,7 @@ macro_rules! object {
 #[macro_export]
 macro_rules! string {
     () => {
-        $crate::schemas::StringSchema::default()
+        $crate::schemas::StringSchemaImpl::default()
     };
 }
 

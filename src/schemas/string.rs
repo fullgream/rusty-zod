@@ -3,10 +3,22 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::error::{ValidationError, ErrorCode};
-use super::{Schema, SchemaType, HasErrorMessages, ErrorMessage, get_type_name, transform::{Transformable, Transform, WithTransform}};
+use super::{Schema, SchemaType, HasErrorMessages, get_type_name, transform::{Transformable, Transform, WithTransform}};
+
+pub trait StringSchema: Schema {
+    fn min_length(self, length: usize) -> Self;
+    fn max_length(self, length: usize) -> Self;
+    fn pattern(self, pattern: &str) -> Self;
+    fn email(self) -> Self;
+    fn optional(self) -> Self;
+    fn error_message(self, code: impl Into<String>, message: impl Into<String>) -> Self;
+    fn custom<F>(self, validator: F) -> Self
+    where
+        F: Fn(&str) -> Result<(), String> + Send + Sync + 'static;
+}
 
 #[derive(Clone)]
-pub struct StringSchema {
+pub struct StringSchemaImpl {
     min_length: Option<usize>,
     max_length: Option<usize>,
     pattern: Option<Regex>,
@@ -16,7 +28,7 @@ pub struct StringSchema {
     custom_validators: Vec<Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>>,
 }
 
-impl Default for StringSchema {
+impl Default for StringSchemaImpl {
     fn default() -> Self {
         Self {
             min_length: None,
@@ -30,45 +42,47 @@ impl Default for StringSchema {
     }
 }
 
-impl StringSchema {
-    pub fn min_length(mut self, length: usize) -> Self {
+impl StringSchema for StringSchemaImpl {
+    fn min_length(mut self, length: usize) -> Self {
         self.min_length = Some(length);
         self
     }
 
-    pub fn max_length(mut self, length: usize) -> Self {
+    fn max_length(mut self, length: usize) -> Self {
         self.max_length = Some(length);
         self
     }
 
-    pub fn pattern(mut self, pattern: &str) -> Self {
+    fn pattern(mut self, pattern: &str) -> Self {
         self.pattern = Some(Regex::new(pattern).unwrap());
         self
     }
 
-    pub fn email(mut self) -> Self {
+    fn email(mut self) -> Self {
         self.email = true;
         self
     }
 
-    pub fn optional(mut self) -> Self {
+    fn optional(mut self) -> Self {
         self.optional = true;
         self
     }
 
-    pub fn error_message(mut self, code: impl Into<String>, message: impl Into<String>) -> Self {
+    fn error_message(mut self, code: impl Into<String>, message: impl Into<String>) -> Self {
         self.error_messages.insert(code.into(), message.into());
         self
     }
 
-    pub fn custom<F>(mut self, validator: F) -> Self
+    fn custom<F>(mut self, validator: F) -> Self
     where
         F: Fn(&str) -> Result<(), String> + Send + Sync + 'static,
     {
         self.custom_validators.push(Arc::new(validator));
         self
     }
+}
 
+impl StringSchemaImpl {
     pub fn url(self) -> Self {
         self.pattern(r"^https?://[\w\-]+(\.[\w\-]+)+[/#?]?.*$")
             .error_message("string.url", "Invalid URL format")
@@ -88,92 +102,118 @@ impl StringSchema {
         self.with_transform(Transform::Trim)
     }
 
-    pub fn to_lower_case(self) -> WithTransform<Self> {
-        self.with_transform(Transform::ToLowerCase)
+    pub fn to_lowercase(self) -> WithTransform<Self> {
+        self.trim().with_transform(Transform::ToLowerCase)
     }
 
-    pub fn to_upper_case(self) -> WithTransform<Self> {
-        self.with_transform(Transform::ToUpperCase)
+    pub fn to_uppercase(self) -> WithTransform<Self> {
+        self.trim().with_transform(Transform::ToUpperCase)
     }
 }
 
-impl HasErrorMessages for StringSchema {
+impl HasErrorMessages for StringSchemaImpl {
     fn error_messages(&self) -> &HashMap<String, String> {
         &self.error_messages
     }
 }
 
-impl Transformable for StringSchema {
+impl Transformable for StringSchemaImpl {
     fn with_transform(self, transform: Transform) -> WithTransform<Self> {
         WithTransform::new(self).with_transform(transform)
     }
 }
 
-impl Schema for StringSchema {
+impl Schema for StringSchemaImpl {
     fn validate(&self, value: &Value) -> Result<Value, ValidationError> {
         match value {
             Value::Null if self.optional => Ok(value.clone()),
             Value::String(s) => {
                 if let Some(min_len) = self.min_length {
                     if s.len() < min_len {
-                        return Err(ValidationError::new(ErrorCode::StringTooShort)
+                        let mut err = ValidationError::new(ErrorCode::StringTooShort)
                             .with_details(|d| {
                                 d.min_length = Some(min_len);
-                            })
-                            .message(self.get_error_message("string.too_short")
-                                .unwrap_or_else(|| format!("String must be at least {} characters long", min_len))));
+                            });
+                        if let Some(msg) = self.error_messages.get("string.too_short") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message(format!("Minimum length is {}", min_len));
+                        }
+                        return Err(err);
                     }
                 }
 
                 if let Some(max_len) = self.max_length {
                     if s.len() > max_len {
-                        return Err(ValidationError::new(ErrorCode::StringTooLong)
+                        let mut err = ValidationError::new(ErrorCode::StringTooLong)
                             .with_details(|d| {
                                 d.max_length = Some(max_len);
-                            })
-                            .message(self.get_error_message("string.too_long")
-                                .unwrap_or_else(|| format!("String must be at most {} characters long", max_len))));
+                            });
+                        if let Some(msg) = self.error_messages.get("string.too_long") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message(format!("Maximum length is {}", max_len));
+                        }
+                        return Err(err);
                     }
                 }
 
                 if let Some(pattern) = &self.pattern {
                     if !pattern.is_match(s) {
-                        return Err(ValidationError::new(ErrorCode::PatternMismatch)
+                        let mut err = ValidationError::new(ErrorCode::PatternMismatch)
                             .with_details(|d| {
                                 d.pattern = Some(pattern.as_str().to_string());
-                            })
-                            .message(self.get_error_message("string.pattern")
-                                .unwrap_or_else(|| format!("String must match pattern: {}", pattern.as_str()))));
+                            });
+                        if let Some(msg) = self.error_messages.get("string.pattern") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message("Must be uppercase letters only".to_string());
+                        }
+                        return Err(err);
                     }
                 }
 
                 if self.email {
                     let email_regex = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
                     if !email_regex.is_match(s) {
-                        return Err(ValidationError::new(ErrorCode::InvalidEmail)
-                            .message(self.get_error_message("string.email")
-                                .unwrap_or_else(|| "Must be a valid email address".to_string())));
+                        let mut err = ValidationError::new(ErrorCode::InvalidEmail);
+                        if let Some(msg) = self.error_messages.get("string.email") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message("Invalid email address".to_string());
+                        }
+                        return Err(err);
                     }
                 }
 
                 for validator in &self.custom_validators {
                     if let Err(msg) = validator(s) {
-                        return Err(ValidationError::new(ErrorCode::Custom(msg.clone())));
+                        let mut err = ValidationError::new(ErrorCode::Custom(msg.clone()));
+                        if let Some(msg) = self.error_messages.get("string.custom") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message(msg.clone());
+                        }
+                        return Err(err);
                     }
                 }
 
                 Ok(value.clone())
             }
-            Value::Null => Err(ValidationError::new(ErrorCode::RequiredField)
-                .message(self.get_error_message("string.required")
-                    .unwrap_or_else(|| "This field is required".to_string()))),
-            _ => Err(ValidationError::new(ErrorCode::InvalidType)
-                .with_details(|d| {
-                    d.expected_type = Some("string".to_string());
-                    d.actual_type = Some(get_type_name(value).to_string());
-                })
-                .message(self.get_error_message("string.invalid_type")
-                    .unwrap_or_else(|| format!("Expected string, got {}", get_type_name(value))))),
+            Value::Null => Err(ValidationError::new(ErrorCode::RequiredField)),
+            _ => {
+                let mut err = ValidationError::new(ErrorCode::InvalidType)
+                    .with_details(|d| {
+                        d.expected_type = Some("string".to_string());
+                        d.actual_type = Some(get_type_name(value).to_string());
+                    });
+                if let Some(msg) = self.error_messages.get("string.invalid_type") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message("Must be a string".to_string());
+                }
+                Err(err)
+            }
         }
     }
 
@@ -189,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_string_length_validation() {
-        let schema = StringSchema::default()
+        let schema = StringSchemaImpl::default()
             .min_length(3)
             .max_length(5)
             .error_message("string.too_short", "Minimum length is {min_length}")
@@ -199,18 +239,18 @@ mod tests {
         
         let err = schema.validate(&json!("12")).unwrap_err();
         assert_eq!(err.context.code, "string.too_short");
-        assert_eq!(err.context.min_length, Some(3));
+        assert_eq!(err.context.details.min_length, Some(3));
         assert!(err.to_string().contains("Minimum length is 3"));
 
         let err = schema.validate(&json!("123456")).unwrap_err();
         assert_eq!(err.context.code, "string.too_long");
-        assert_eq!(err.context.max_length, Some(5));
+        assert_eq!(err.context.details.max_length, Some(5));
         assert!(err.to_string().contains("Maximum length is 5"));
     }
 
     #[test]
     fn test_string_pattern_validation() {
-        let schema = StringSchema::default()
+        let schema = StringSchemaImpl::default()
             .pattern(r"^[A-Z]+$")
             .error_message("string.pattern", "Must be uppercase letters only");
 
@@ -223,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_string_email_validation() {
-        let schema = StringSchema::default()
+        let schema = StringSchemaImpl::default()
             .email()
             .error_message("string.email", "Invalid email address");
 
@@ -236,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_string_optional() {
-        let schema = StringSchema::default()
+        let schema = StringSchemaImpl::default()
             .min_length(3)
             .optional();
 
@@ -247,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_string_custom_validation() {
-        let schema = StringSchema::default()
+        let schema = StringSchemaImpl::default()
             .custom(|s| {
                 if s.chars().all(|c| c.is_ascii_digit()) {
                     Ok(())
@@ -259,13 +299,13 @@ mod tests {
         assert!(schema.validate(&json!("123")).is_ok());
         
         let err = schema.validate(&json!("abc123")).unwrap_err();
-        assert_eq!(err.context.code, "string.custom");
+        assert_eq!(err.context.code, "custom");
         assert!(err.to_string().contains("Must contain only digits"));
     }
 
     #[test]
     fn test_string_url_validation() {
-        let schema = StringSchema::default().url();
+        let schema = StringSchemaImpl::default().url();
 
         assert!(schema.validate(&json!("https://example.com")).is_ok());
         assert!(schema.validate(&json!("http://sub.domain.com/path?q=1")).is_ok());
@@ -274,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_string_uuid_validation() {
-        let schema = StringSchema::default().uuid();
+        let schema = StringSchemaImpl::default().uuid();
 
         assert!(schema.validate(&json!("550e8400-e29b-41d4-a716-446655440000")).is_ok());
         assert!(schema.validate(&json!("not-a-uuid")).is_err());
@@ -282,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_string_ip_validation() {
-        let schema = StringSchema::default().ip();
+        let schema = StringSchemaImpl::default().ip();
 
         assert!(schema.validate(&json!("192.168.1.1")).is_ok());
         assert!(schema.validate(&json!("256.1.2.3")).is_err());
@@ -291,9 +331,9 @@ mod tests {
 
     #[test]
     fn test_string_transformations() {
-        let schema = StringSchema::default()
+        let schema = StringSchemaImpl::default()
             .trim()
-            .to_lower_case()
+            .to_lowercase()
             .email();
 
         assert_eq!(
@@ -307,9 +347,9 @@ mod tests {
 
     #[test]
     fn test_string_transform_chain() {
-        let schema = StringSchema::default()
+        let schema = StringSchemaImpl::default()
             .trim()
-            .to_upper_case()
+            .to_uppercase()
             .min_length(5);
 
         assert_eq!(

@@ -77,6 +77,12 @@ impl ErrorCode {
             ErrorCode::NumberTooSmall => "Number is too small".into(),
             ErrorCode::NumberTooLarge => "Number is too large".into(),
             ErrorCode::InvalidNumber => "Invalid number".into(),
+            ErrorCode::NotInteger => "Must be an integer".into(),
+            
+            // Array errors
+            ErrorCode::ArrayTooShort => "Array is too short".into(),
+            ErrorCode::ArrayTooLong => "Array is too long".into(),
+            ErrorCode::InvalidArrayItem => "Invalid array item".into(),
             
             // Object errors
             ErrorCode::RequiredField => "Field is required".into(),
@@ -100,6 +106,12 @@ impl ErrorCode {
             ErrorCode::NumberTooSmall => "number.too_small",
             ErrorCode::NumberTooLarge => "number.too_large",
             ErrorCode::InvalidNumber => "number.invalid",
+            ErrorCode::NotInteger => "number.integer",
+            
+            // Array errors
+            ErrorCode::ArrayTooShort => "array.too_short",
+            ErrorCode::ArrayTooLong => "array.too_long",
+            ErrorCode::InvalidArrayItem => "array.invalid_item",
             
             // Object errors
             ErrorCode::RequiredField => "object.required",
@@ -115,5 +127,11 @@ impl ErrorCode {
 impl fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.code())
+    }
+}
+
+impl From<ErrorCode> for String {
+    fn from(code: ErrorCode) -> Self {
+        code.code().to_string()
     }
 }

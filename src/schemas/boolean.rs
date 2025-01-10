@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::error::ValidationError;
-use super::{Schema, SchemaType, HasErrorMessages, ErrorMessage, get_type_name};
+use super::{Schema, SchemaType, HasErrorMessages, get_type_name};
 
 #[derive(Clone, Default)]
 pub struct BooleanSchema {
@@ -33,13 +33,21 @@ impl Schema for BooleanSchema {
         match value {
             Value::Bool(_) => Ok(value.clone()),
             Value::Null if self.optional => Ok(value.clone()),
-            Value::Null => Err(ValidationError::new("boolean.required", "")
-                .with_message(self.get_error_message("boolean.required")
-                    .unwrap_or_else(|| "This field is required".to_string()))),
-            _ => Err(ValidationError::new("boolean.invalid_type", "")
-                .with_message(self.get_error_message("boolean.invalid_type")
-                    .unwrap_or_else(|| format!("Expected boolean, got {}", get_type_name(value))))
-                .with_type_info("boolean", get_type_name(value).to_string())),
+            Value::Null => Err(ValidationError::new("boolean.required")
+                .message("This field is required")),
+            _ => {
+                let mut err = ValidationError::new("boolean.invalid_type")
+                    .with_details(|d| {
+                        d.expected_type = Some("boolean".to_string());
+                        d.actual_type = Some(get_type_name(value).to_string());
+                    });
+                if let Some(msg) = self.error_messages.get("boolean.invalid_type") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message("Must be a boolean value");
+                }
+                Err(err)
+            }
         }
     }
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::error::ValidationError;
-use super::{Schema, SchemaType, HasErrorMessages, ErrorMessage, get_type_name, validate_schema_type};
+use super::{Schema, SchemaType, HasErrorMessages, get_type_name, validate_schema_type};
 
 #[derive(Clone)]
 pub struct ArraySchema {
@@ -26,11 +26,13 @@ impl ArraySchema {
 
     pub fn min_items(mut self, count: usize) -> Self {
         self.min_items = Some(count);
+        self.error_messages.insert("array.min_items".to_string(), format!("Must have at least {} items", count));
         self
     }
 
     pub fn max_items(mut self, count: usize) -> Self {
         self.max_items = Some(count);
+        self.error_messages.insert("array.max_items".to_string(), format!("Must have at most {} items", count));
         self
     }
 
@@ -57,38 +59,75 @@ impl Schema for ArraySchema {
             Value::Array(arr) => {
                 if let Some(min_items) = self.min_items {
                     if arr.len() < min_items {
-                        return Err(ValidationError::new("array.min_items", "")
-                            .with_message(self.get_error_message("array.min_items")
-                                .unwrap_or_else(|| format!("Array must contain at least {} items", min_items)))
-                            .with_min(min_items as i64));
+                        let mut err = ValidationError::new("array.min_items")
+                            .with_details(|d| {
+                                d.min_length = Some(min_items);
+                            });
+                        if let Some(msg) = self.error_messages.get("array.min_items") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message("less than minimum".to_string());
+                        }
+                        return Err(err);
                     }
                 }
 
                 if let Some(max_items) = self.max_items {
                     if arr.len() > max_items {
-                        return Err(ValidationError::new("array.max_items", "")
-                            .with_message(self.get_error_message("array.max_items")
-                                .unwrap_or_else(|| format!("Array must contain at most {} items", max_items)))
-                            .with_max(max_items as i64));
+                        let mut err = ValidationError::new("array.max_items")
+                            .with_details(|d| {
+                                d.max_length = Some(max_items);
+                            });
+                        if let Some(msg) = self.error_messages.get("array.max_items") {
+                            err = err.message(msg.clone());
+                        } else {
+                            err = err.message(format!("Must have at most {} items", max_items));
+                        }
+                        return Err(err);
                     }
                 }
 
+                let mut result = Vec::new();
                 for (i, item) in arr.iter().enumerate() {
-                    if let Err(e) = validate_schema_type(self.item_schema.as_ref(), item) {
-                        return Err(e.with_path_prefix(&i.to_string()));
+                    match validate_schema_type(self.item_schema.as_ref(), item) {
+                        Ok(validated) => result.push(validated),
+                        Err(e) => {
+                            let mut err = e.with_path_prefix(&i.to_string());
+                            if let Some(msg) = self.error_messages.get("array.item") {
+                                err = err.message(msg.clone());
+                            } else {
+                                err = err.message(format!("Item {} is invalid", i));
+                            }
+                            return Err(err);
+                        }
                     }
                 }
 
-                Ok(value.clone())
+                Ok(Value::Array(result))
             }
             Value::Null if self.optional => Ok(value.clone()),
-            Value::Null => Err(ValidationError::new("array.required", "")
-                .with_message(self.get_error_message("array.required")
-                    .unwrap_or_else(|| "This field is required".to_string()))),
-            _ => Err(ValidationError::new("array.invalid_type", "")
-                .with_message(self.get_error_message("array.invalid_type")
-                    .unwrap_or_else(|| format!("Expected array, got {}", get_type_name(value))))
-                .with_type_info("array", get_type_name(value).to_string())),
+            Value::Null => {
+                let mut err = ValidationError::new("array.required");
+                if let Some(msg) = self.error_messages.get("array.required") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message("This field is required");
+                }
+                Err(err)
+            }
+            _ => {
+                let mut err = ValidationError::new("array.invalid_type")
+                    .with_details(|d| {
+                        d.expected_type = Some("array".to_string());
+                        d.actual_type = Some(get_type_name(value).to_string());
+                    });
+                if let Some(msg) = self.error_messages.get("array.invalid_type") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message("Must be an array");
+                }
+                Err(err)
+            }
         }
     }
 
@@ -101,11 +140,11 @@ impl Schema for ArraySchema {
 mod tests {
     use super::*;
     use serde_json::json;
-    use crate::schemas::{StringSchema, NumberSchema};
+    use crate::schemas::{string::StringSchemaImpl, NumberSchema};
 
     #[test]
     fn test_array_length_validation() {
-        let schema = ArraySchema::new(StringSchema::default())
+        let schema = ArraySchema::new(StringSchemaImpl::default())
             .min_items(2)
             .max_items(4)
             .error_message("array.min_items", "Must have at least {min} items")
@@ -115,12 +154,12 @@ mod tests {
         
         let err = schema.validate(&json!(["a"])).unwrap_err();
         assert_eq!(err.context.code, "array.min_items");
-        assert_eq!(err.context.min, Some(2));
+        assert_eq!(err.context.details.min_length, Some(2));
         assert!(err.to_string().contains("Must have at least 2 items"));
 
         let err = schema.validate(&json!(["a", "b", "c", "d", "e"])).unwrap_err();
         assert_eq!(err.context.code, "array.max_items");
-        assert_eq!(err.context.max, Some(4));
+        assert_eq!(err.context.details.max_length, Some(4));
         assert!(err.to_string().contains("Must have at most 4 items"));
     }
 
@@ -137,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_array_optional() {
-        let schema = ArraySchema::new(StringSchema::default()).optional();
+        let schema = ArraySchema::new(StringSchemaImpl::default()).optional();
 
         assert!(schema.validate(&json!(["a", "b"])).is_ok());
         assert!(schema.validate(&json!(null)).is_ok());
@@ -146,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_array_type_validation() {
-        let schema = ArraySchema::new(StringSchema::default())
+        let schema = ArraySchema::new(StringSchemaImpl::default())
             .error_message("array.invalid_type", "Must be an array");
 
         assert!(schema.validate(&json!(["a", "b"])).is_ok());

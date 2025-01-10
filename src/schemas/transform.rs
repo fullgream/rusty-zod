@@ -143,6 +143,43 @@ impl<S> WithTransform<S> {
         self.transforms.push(transform);
         self
     }
+
+    pub fn into_inner(self) -> S {
+        self.schema
+    }
+}
+
+impl<S: super::StringSchema> WithTransform<S> {
+    pub fn min_length(self, length: usize) -> Self {
+        WithTransform::new(self.into_inner().min_length(length))
+    }
+
+    pub fn max_length(self, length: usize) -> Self {
+        WithTransform::new(self.into_inner().max_length(length))
+    }
+
+    pub fn pattern(self, pattern: &str) -> Self {
+        WithTransform::new(self.into_inner().pattern(pattern))
+    }
+
+    pub fn email(self) -> Self {
+        WithTransform::new(self.into_inner().email())
+    }
+
+    pub fn optional(self) -> Self {
+        WithTransform::new(self.into_inner().optional())
+    }
+
+    pub fn error_message(self, code: impl Into<String>, message: impl Into<String>) -> Self {
+        WithTransform::new(self.into_inner().error_message(code, message))
+    }
+
+    pub fn custom<F>(self, validator: F) -> Self
+    where
+        F: Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+    {
+        WithTransform::new(self.into_inner().custom(validator))
+    }
 }
 
 impl<S: super::Schema> Transformable for WithTransform<S> {
@@ -157,11 +194,45 @@ impl<S: super::Schema> super::Schema for WithTransform<S> {
         for transform in &self.transforms {
             value = transform.apply(value);
         }
-        self.schema.validate(&value)
+        let validated = self.schema.validate(&value)?;
+        Ok(validated)
     }
 
     fn into_schema_type(self) -> super::SchemaType {
         self.schema.into_schema_type()
+    }
+}
+
+impl<S: super::string::StringSchema> super::string::StringSchema for WithTransform<S> {
+    fn min_length(self, length: usize) -> Self {
+        WithTransform::new(self.into_inner().min_length(length))
+    }
+
+    fn max_length(self, length: usize) -> Self {
+        WithTransform::new(self.into_inner().max_length(length))
+    }
+
+    fn pattern(self, pattern: &str) -> Self {
+        WithTransform::new(self.into_inner().pattern(pattern))
+    }
+
+    fn email(self) -> Self {
+        WithTransform::new(self.into_inner().email())
+    }
+
+    fn optional(self) -> Self {
+        WithTransform::new(self.into_inner().optional())
+    }
+
+    fn error_message(self, code: impl Into<String>, message: impl Into<String>) -> Self {
+        WithTransform::new(self.into_inner().error_message(code, message))
+    }
+
+    fn custom<F>(self, validator: F) -> Self
+    where
+        F: Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+    {
+        WithTransform::new(self.into_inner().custom(validator))
     }
 }
 

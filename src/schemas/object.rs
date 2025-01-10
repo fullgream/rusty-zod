@@ -3,7 +3,7 @@ use serde::{de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::error::{ValidationError, ParseError};
-use super::{Schema, SchemaType, HasErrorMessages, ErrorMessage, get_type_name, validate_schema_type};
+use super::{Schema, SchemaType, HasErrorMessages, get_type_name, validate_schema_type};
 
 #[derive(Clone)]
 pub struct ObjectSchema {
@@ -26,13 +26,17 @@ impl Default for ObjectSchema {
 
 impl ObjectSchema {
     pub fn field(mut self, name: &str, schema: impl Schema) -> Self {
-        self.fields.insert(name.to_string(), Box::new(schema.into_schema_type()));
+        let schema_type = schema.into_schema_type();
+        self.fields.insert(name.to_string(), Box::new(schema_type));
         self.required.insert(name.to_string());
+        self.error_messages.insert(format!("field.{}.required", name), format!("Field '{}' is required", name));
         self
     }
 
     pub fn optional_field(mut self, name: &str, schema: impl Schema) -> Self {
-        self.fields.insert(name.to_string(), Box::new(schema.into_schema_type()));
+        let schema_type = schema.into_schema_type();
+        self.fields.insert(name.to_string(), Box::new(schema_type));
+        self.error_messages.insert(format!("field.{}.optional", name), "This field is optional".to_string());
         self
     }
 
@@ -73,12 +77,32 @@ impl Schema for ObjectSchema {
     fn validate(&self, value: &Value) -> Result<Value, ValidationError> {
         match value {
             Value::Object(obj) => {
-                // Check required fields
-                for field in &self.required {
-                    if !obj.contains_key(field) {
-                        return Err(ValidationError::new("object.required", field)
-                            .with_message(self.get_error_message("object.required")
-                                .unwrap_or_else(|| format!("Field {} is required", field))));
+                let mut result = serde_json::Map::new();
+
+                // Check required fields and validate each field
+                for (field, schema) in &self.fields {
+                    match obj.get(field) {
+                        Some(value) => {
+                            match validate_schema_type(schema.as_ref(), value) {
+                                Ok(validated) => {
+                                    result.insert(field.clone(), validated);
+                                }
+                                Err(e) => {
+                                    return Err(e.with_path_prefix(field));
+                                }
+                            }
+                        }
+                        None => {
+                            if self.required.contains(field) {
+                                let mut err = ValidationError::new("object.required")
+                                    .at(field)
+                                    .with_details(|d| {
+                                        d.field_name = Some(field.clone());
+                                    });
+                                err = err.message(format!("Field '{}' is required", field));
+                                return Err(err);
+                            }
+                        }
                     }
                 }
 
@@ -86,33 +110,41 @@ impl Schema for ObjectSchema {
                 if self.error_messages.contains_key("object.unknown_field") {
                     for field in obj.keys() {
                         if !self.fields.contains_key(field) {
-                            return Err(ValidationError::new("object.unknown_field", field)
-                                .with_message(self.get_error_message("object.unknown_field")
-                                    .unwrap_or_else(|| format!("Unknown field: {}", field))
-                                    .replace("{field}", field)));
+                            let mut err = ValidationError::new("object.unknown_field")
+                                .at(field)
+                                .with_details(|d| {
+                                    d.field_name = Some(field.clone());
+                                });
+                            err = err.message(format!("Unknown field: {}", field));
+                            return Err(err);
+                        }
+                    }
+                } else {
+                    // Copy over any additional fields in non-strict mode
+                    for (field, value) in obj {
+                        if !self.fields.contains_key(field) {
+                            result.insert(field.clone(), value.clone());
                         }
                     }
                 }
 
-                // Validate each field
-                for (field, schema) in &self.fields {
-                    if let Some(value) = obj.get(field) {
-                        if let Err(e) = validate_schema_type(schema.as_ref(), value) {
-                            return Err(e.with_path_prefix(field));
-                        }
-                    }
-                }
-
-                Ok(value.clone())
+                Ok(Value::Object(result))
             }
             Value::Null if self.optional => Ok(value.clone()),
-            Value::Null => Err(ValidationError::new("object.required", "")
-                .with_message(self.get_error_message("object.required")
-                    .unwrap_or_else(|| "This field is required".to_string()))),
-            _ => Err(ValidationError::new("object.invalid_type", "")
-                .with_message(self.get_error_message("object.invalid_type")
-                    .unwrap_or_else(|| format!("Expected object, got {}", get_type_name(value))))
-                .with_type_info("object", get_type_name(value).to_string())),
+            Value::Null => {
+                let err = ValidationError::new("object.required")
+                    .message("This field is required");
+                Err(err)
+            }
+            _ => {
+                let err = ValidationError::new("object.invalid_type")
+                    .with_details(|d| {
+                        d.expected_type = Some("object".to_string());
+                        d.actual_type = Some(get_type_name(value).to_string());
+                    })
+                    .message("Must be an object");
+                Err(err)
+            }
         }
     }
 
@@ -126,7 +158,7 @@ mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
-    use crate::schemas::{StringSchema, NumberSchema};
+    use crate::schemas::{string::StringSchemaImpl, NumberSchema};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct User {
@@ -150,7 +182,7 @@ mod tests {
     #[test]
     fn test_object_required_fields() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .field("age", NumberSchema::default());
 
         assert!(schema.validate(&json!({
@@ -169,7 +201,7 @@ mod tests {
     #[test]
     fn test_object_optional_fields() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .optional_field("age", NumberSchema::default());
 
         assert!(schema.validate(&json!({
@@ -189,7 +221,7 @@ mod tests {
     #[test]
     fn test_object_strict_mode() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .strict();
 
         assert!(schema.validate(&json!({
@@ -207,11 +239,11 @@ mod tests {
     #[test]
     fn test_object_nested_validation() {
         let address_schema = ObjectSchema::default()
-            .field("street", StringSchema::default())
-            .field("city", StringSchema::default());
+            .field("street", StringSchemaImpl::default())
+            .field("city", StringSchemaImpl::default());
 
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .field("address", address_schema);
 
         assert!(schema.validate(&json!({
@@ -234,7 +266,7 @@ mod tests {
     #[test]
     fn test_object_optional() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .optional();
 
         assert!(schema.validate(&json!({
@@ -247,7 +279,7 @@ mod tests {
     #[test]
     fn test_object_type_validation() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .error_message("object.invalid_type", "Must be an object");
 
         let err = schema.validate(&json!("not an object")).unwrap_err();
@@ -258,9 +290,9 @@ mod tests {
     #[test]
     fn test_object_parse_simple() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .field("age", NumberSchema::default())
-            .optional_field("email", StringSchema::default());
+            .optional_field("email", StringSchemaImpl::default());
 
         let value = json!({
             "name": "John",
@@ -288,11 +320,11 @@ mod tests {
     #[test]
     fn test_object_parse_nested() {
         let address_schema = ObjectSchema::default()
-            .field("street", StringSchema::default())
-            .field("city", StringSchema::default());
+            .field("street", StringSchemaImpl::default())
+            .field("city", StringSchemaImpl::default());
 
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .field("address", address_schema);
 
         let value = json!({
@@ -312,7 +344,7 @@ mod tests {
     #[test]
     fn test_object_parse_validation_error() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .field("age", NumberSchema::default());
 
         let value = json!({
@@ -334,7 +366,7 @@ mod tests {
     #[test]
     fn test_object_parse_type_mismatch() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .field("age", NumberSchema::default());
 
         let value = json!({
@@ -356,7 +388,7 @@ mod tests {
     #[test]
     fn test_object_parse_missing_field() {
         let schema = ObjectSchema::default()
-            .field("name", StringSchema::default())
+            .field("name", StringSchemaImpl::default())
             .field("age", NumberSchema::default());
 
         let value = json!({
