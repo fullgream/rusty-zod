@@ -127,8 +127,8 @@ pub trait Transformable: Sized {
 /// A wrapper that adds transformation to a schema
 #[derive(Clone)]
 pub struct WithTransform<S> {
-    schema: S,
-    transforms: Vec<Transform>,
+    pub schema: S,
+    pub transforms: Vec<Transform>,
 }
 
 impl<S> WithTransform<S> {
@@ -144,58 +144,71 @@ impl<S> WithTransform<S> {
         self
     }
 
+    pub fn with_transforms(mut self, transforms: Vec<Transform>) -> Self {
+        self.transforms.extend(transforms);
+        self
+    }
+
     pub fn into_inner(self) -> S {
         self.schema
     }
 }
 
 impl<S: super::StringSchema> WithTransform<S> {
-    pub fn min_length(self, length: usize) -> Self {
-        WithTransform::new(self.into_inner().min_length(length))
+    pub fn min_length(mut self, length: usize) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        WithTransform::new(self.into_inner().min_length(length)).with_transforms(transforms)
     }
 
-    pub fn max_length(self, length: usize) -> Self {
-        WithTransform::new(self.into_inner().max_length(length))
+    pub fn max_length(mut self, length: usize) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        WithTransform::new(self.into_inner().max_length(length)).with_transforms(transforms)
     }
 
-    pub fn pattern(self, pattern: &str) -> Self {
-        WithTransform::new(self.into_inner().pattern(pattern))
+    pub fn pattern(mut self, pattern: &str) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        WithTransform::new(self.into_inner().pattern(pattern)).with_transforms(transforms)
     }
 
-    pub fn email(self) -> Self {
-        WithTransform::new(self.into_inner().email())
+    pub fn email(mut self) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        WithTransform::new(self.into_inner().email()).with_transforms(transforms)
     }
 
-    pub fn optional(self) -> Self {
-        WithTransform::new(self.into_inner().optional())
+    pub fn optional(mut self) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        WithTransform::new(self.into_inner().optional()).with_transforms(transforms)
     }
 
-    pub fn error_message(self, code: impl Into<String>, message: impl Into<String>) -> Self {
-        WithTransform::new(self.into_inner().error_message(code, message))
+    pub fn error_message(mut self, code: impl Into<String>, message: impl Into<String>) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        WithTransform::new(self.into_inner().error_message(code, message)).with_transforms(transforms)
     }
 
-    pub fn custom<F>(self, validator: F) -> Self
+    pub fn custom<F>(mut self, validator: F) -> Self
     where
         F: Fn(&str) -> Result<(), String> + Send + Sync + 'static,
     {
-        WithTransform::new(self.into_inner().custom(validator))
-    }
-}
-
-impl<S: super::Schema> Transformable for WithTransform<S> {
-    fn with_transform(self, transform: Transform) -> WithTransform<Self> {
-        WithTransform::new(self).with_transform(transform)
+        let transforms = std::mem::take(&mut self.transforms);
+        WithTransform::new(self.into_inner().custom(validator)).with_transforms(transforms)
     }
 }
 
 impl<S: super::Schema> super::Schema for WithTransform<S> {
+    fn is_optional(&self) -> bool {
+        self.schema.is_optional()
+    }
+
     fn validate(&self, value: &Value) -> Result<Value, crate::error::ValidationError> {
         let mut value = value.clone();
+        // First apply transformations in the order they were added
         for transform in &self.transforms {
             value = transform.apply(value);
         }
+        // Then validate the transformed value
         let validated = self.schema.validate(&value)?;
-        Ok(validated)
+        // Return the transformed value
+        Ok(value)
     }
 
     fn into_schema_type(self) -> super::SchemaType {
@@ -204,35 +217,56 @@ impl<S: super::Schema> super::Schema for WithTransform<S> {
 }
 
 impl<S: super::string::StringSchema> super::string::StringSchema for WithTransform<S> {
-    fn min_length(self, length: usize) -> Self {
-        WithTransform::new(self.into_inner().min_length(length))
+    fn min_length(mut self, length: usize) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        let mut schema = WithTransform::new(self.into_inner().min_length(length));
+        schema.transforms = transforms;
+        schema
     }
 
-    fn max_length(self, length: usize) -> Self {
-        WithTransform::new(self.into_inner().max_length(length))
+    fn max_length(mut self, length: usize) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        let mut schema = WithTransform::new(self.into_inner().max_length(length));
+        schema.transforms = transforms;
+        schema
     }
 
-    fn pattern(self, pattern: &str) -> Self {
-        WithTransform::new(self.into_inner().pattern(pattern))
+    fn pattern(mut self, pattern: &str) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        let mut schema = WithTransform::new(self.into_inner().pattern(pattern));
+        schema.transforms = transforms;
+        schema
     }
 
-    fn email(self) -> Self {
-        WithTransform::new(self.into_inner().email())
+    fn email(mut self) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        let mut schema = WithTransform::new(self.into_inner().email());
+        schema.transforms = transforms;
+        schema
     }
 
-    fn optional(self) -> Self {
-        WithTransform::new(self.into_inner().optional())
+    fn optional(mut self) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        let mut schema = WithTransform::new(self.into_inner().optional());
+        schema.transforms = transforms;
+        schema
     }
 
-    fn error_message(self, code: impl Into<String>, message: impl Into<String>) -> Self {
-        WithTransform::new(self.into_inner().error_message(code, message))
+    fn error_message(mut self, code: impl Into<String>, message: impl Into<String>) -> Self {
+        let transforms = std::mem::take(&mut self.transforms);
+        let mut schema = WithTransform::new(self.into_inner().error_message(code, message));
+        schema.transforms = transforms;
+        schema
     }
 
-    fn custom<F>(self, validator: F) -> Self
+    fn custom<F>(mut self, validator: F) -> Self
     where
         F: Fn(&str) -> Result<(), String> + Send + Sync + 'static,
     {
-        WithTransform::new(self.into_inner().custom(validator))
+        let transforms = std::mem::take(&mut self.transforms);
+        let mut schema = WithTransform::new(self.into_inner().custom(validator));
+        schema.transforms = transforms;
+        schema
     }
 }
 

@@ -30,6 +30,7 @@ pub enum SchemaType {
 pub trait Schema {
     fn validate(&self, value: &Value) -> Result<Value, ValidationError>;
     fn into_schema_type(self) -> SchemaType where Self: Sized;
+    fn is_optional(&self) -> bool { false }
 }
 
 pub trait ValueTransform {
