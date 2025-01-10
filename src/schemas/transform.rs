@@ -26,14 +26,14 @@ impl Transform {
             Transform::Custom(f) => f(value),
             Transform::ToLowerCase => {
                 if let Value::String(s) = value {
-                    Value::String(s.to_lowercase())
+                    Value::String(s.trim().to_lowercase())
                 } else {
                     value
                 }
             }
             Transform::ToUpperCase => {
                 if let Value::String(s) = value {
-                    Value::String(s.to_uppercase())
+                    Value::String(s.trim().to_uppercase())
                 } else {
                     value
                 }
@@ -47,7 +47,7 @@ impl Transform {
             }
             Transform::ParseNumber => {
                 if let Value::String(s) = &value {
-                    if let Ok(n) = s.parse::<f64>() {
+                    if let Ok(n) = s.trim().parse::<f64>() {
                         Value::Number(serde_json::Number::from_f64(n).unwrap())
                     } else {
                         value
@@ -206,9 +206,7 @@ impl<S: super::Schema> super::Schema for WithTransform<S> {
             value = transform.apply(value);
         }
         // Then validate the transformed value
-        let validated = self.schema.validate(&value)?;
-        // Return the transformed value
-        Ok(value)
+        self.schema.validate(&value)
     }
 
     fn into_schema_type(self) -> super::SchemaType {
