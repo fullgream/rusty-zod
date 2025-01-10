@@ -1,7 +1,4 @@
 use std::fmt;
-use super::error_code::ErrorCode;
-
-
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ValidationError {
     pub context: ValidationErrorContext,
@@ -210,7 +207,10 @@ impl std::error::Error for ValidationError {}
 
 #[cfg(test)]
 mod tests {
+    use crate::error::error_code;
+
     use super::*;
+    use error_code::ErrorCode;
     use serde_json::json;
 
     #[test]

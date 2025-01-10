@@ -150,56 +150,6 @@ impl NumberSchema {
 
         Ok(Value::Number(serde_json::Number::from_f64(num).unwrap()))
     }
-
-    fn validate(&self, value: &Value) -> Result<Value, ValidationError> {
-        match value {
-            Value::Number(n) => {
-                let num = n.as_f64().unwrap();
-                self.validate_number(num)
-            }
-            Value::String(s) if self.coerce => {
-                match s.parse::<f64>() {
-                    Ok(num) => self.validate_number(num),
-                    Err(_) => {
-                        let mut err = ValidationError::new("number.invalid_type")
-                            .with_details(|d| {
-                                d.expected_type = Some("number".to_string());
-                                d.actual_type = Some("string".to_string());
-                            });
-                        if let Some(msg) = self.error_messages.get("number.invalid_type") {
-                            err = err.message(msg.clone());
-                        } else {
-                            err = err.message("Must be a number");
-                        }
-                        Err(err)
-                    }
-                }
-            }
-            Value::Null if self.optional => Ok(value.clone()),
-            Value::Null => {
-                let mut err = ValidationError::new("number.required");
-                if let Some(msg) = self.error_messages.get("number.required") {
-                    err = err.message(msg.clone());
-                } else {
-                    err = err.message("This field is required");
-                }
-                Err(err)
-            }
-            _ => {
-                let mut err = ValidationError::new("number.invalid_type")
-                    .with_details(|d| {
-                        d.expected_type = Some("number".to_string());
-                        d.actual_type = Some(get_type_name(value).to_string());
-                    });
-                if let Some(msg) = self.error_messages.get("number.invalid_type") {
-                    err = err.message(msg.clone());
-                } else {
-                    err = err.message("Must be a number");
-                }
-                Err(err)
-            }
-        }
-    }
 }
 
 #[cfg(test)]
