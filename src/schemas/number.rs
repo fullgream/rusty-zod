@@ -92,12 +92,19 @@ impl Schema for NumberSchema {
             }
             Value::Null => Err(ValidationError::new("number.required")
                 .message("This field is required")),
-            _ => Err(ValidationError::new("number.invalid_type")
-                .message(format!("Expected number, got {}", get_type_name(value)))
-                .with_details(|d| {
-                    d.expected_type = Some("number".to_string());
-                    d.actual_type = Some(get_type_name(value).to_string());
-                })),
+            _ => {
+                let mut err = ValidationError::new("number.invalid_type")
+                    .with_details(|d| {
+                        d.expected_type = Some("number".to_string());
+                        d.actual_type = Some(get_type_name(value).to_string());
+                    });
+                if let Some(msg) = self.error_messages.get("number.invalid_type") {
+                    err = err.message(msg.clone());
+                } else {
+                    err = err.message(format!("Expected number, got {}", get_type_name(value)));
+                }
+                Err(err)
+            },
         }
     }
 

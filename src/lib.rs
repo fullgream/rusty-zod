@@ -74,7 +74,15 @@ macro_rules! object {
         let mut schema = $crate::object();
         $(
             let value = $value;
-            schema = schema.field($key, value);
+            let is_optional = match &value {
+                s if s.is_optional() => true,
+                _ => false,
+            };
+            if is_optional {
+                schema = schema.optional_field($key, value);
+            } else {
+                schema = schema.field($key, value);
+            }
         )*
         schema
     }};

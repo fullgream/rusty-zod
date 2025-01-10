@@ -19,7 +19,9 @@ impl Default for ObjectSchema {
             fields: HashMap::new(),
             required: HashSet::new(),
             optional: false,
-            error_messages: HashMap::new(),
+            error_messages: HashMap::from([
+                ("object.unknown_field".to_string(), "Unknown field: {field}".to_string())
+            ]),
         }
     }
 }
@@ -27,15 +29,18 @@ impl Default for ObjectSchema {
 impl ObjectSchema {
     pub fn field(mut self, name: &str, schema: impl Schema) -> Self {
         let schema_type = schema.into_schema_type();
-        self.fields.insert(name.to_string(), Box::new(schema_type));
-        self.required.insert(name.to_string());
+        let name = name.to_string();
+        self.fields.insert(name.clone(), Box::new(schema_type));
+        self.required.insert(name.clone());
         self.error_messages.insert(format!("field.{}.required", name), format!("Field '{}' is required", name));
         self
     }
 
     pub fn optional_field(mut self, name: &str, schema: impl Schema) -> Self {
         let schema_type = schema.into_schema_type();
-        self.fields.insert(name.to_string(), Box::new(schema_type));
+        let name = name.to_string();
+        self.fields.insert(name.clone(), Box::new(schema_type));
+        self.required.remove(&name);
         self.error_messages.insert(format!("field.{}.optional", name), "This field is optional".to_string());
         self
     }

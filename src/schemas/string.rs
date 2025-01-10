@@ -99,15 +99,15 @@ impl StringSchemaImpl {
     }
 
     pub fn trim(self) -> WithTransform<Self> {
-        self.with_transform(Transform::Trim)
+        WithTransform::new(self).with_transform(Transform::Trim)
     }
 
     pub fn to_lowercase(self) -> WithTransform<Self> {
-        self.trim().with_transform(Transform::ToLowerCase)
+        WithTransform::new(self).with_transform(Transform::ToLowerCase)
     }
 
     pub fn to_uppercase(self) -> WithTransform<Self> {
-        self.trim().with_transform(Transform::ToUpperCase)
+        WithTransform::new(self).with_transform(Transform::ToUpperCase)
     }
 }
 
@@ -123,7 +123,18 @@ impl Transformable for StringSchemaImpl {
     }
 }
 
+impl Transformable for WithTransform<StringSchemaImpl> {
+    fn with_transform(mut self, transform: Transform) -> WithTransform<Self> {
+        self.transforms.push(transform);
+        WithTransform::new(self)
+    }
+}
+
 impl Schema for StringSchemaImpl {
+    fn is_optional(&self) -> bool {
+        self.optional
+    }
+
     fn validate(&self, value: &Value) -> Result<Value, ValidationError> {
         match value {
             Value::Null if self.optional => Ok(value.clone()),
