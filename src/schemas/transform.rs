@@ -207,8 +207,8 @@ impl<S: super::Schema> super::Schema for WithTransform<S> {
         }
         // Then validate the transformed value
         let validated = self.schema.validate(&value)?;
-        // Return the validated value
-        Ok(validated)
+        // Return the transformed value
+        Ok(value)
     }
 
     fn into_schema_type(self) -> super::SchemaType {
